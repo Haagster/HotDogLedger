@@ -1,0 +1,1937 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <title>🌭 Official™ Hot Dog Ledger</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #F2F2F2; font-family: 'Segoe UI', sans-serif; }
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateX(-50%) translateY(10px); }
+      to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+    }
+    @keyframes pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(255,107,0,0.4); }
+      50%       { box-shadow: 0 0 0 6px rgba(255,107,0,0); }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+
+// ─── THEME ────────────────────────────────────────────────────────────────────
+const RED    = "#E31837";
+const BLUE   = "#005DAA";
+const YELLOW = "#F5C518";
+const GREEN  = "#4CAF50";
+const ORANGE = "#FF6B00";
+const PURPLE = "#7B2D8B";  // Executive Multiplier
+const CHICKEN_GOLD = "#C8860A";  // Rotisserie gold
+
+// ── Business day countdown ────────────────────────────────────────────────────
+function addBusinessDays(dateIso, days) {
+  const d = new Date(dateIso);
+  let added = 0;
+  while (added < days) {
+    d.setDate(d.getDate() + 1);
+    const day = d.getDay();
+    if (day !== 0 && day !== 6) added++;
+  }
+  return d;
+}
+
+function businessDayStatus(triggeredDateIso) {
+  if (!triggeredDateIso) return null;
+  const deadline = addBusinessDays(triggeredDateIso, 5);
+  const now = new Date();
+  const msLeft = deadline - now;
+  const daysLeft = Math.ceil(msLeft / (1000 * 60 * 60 * 24));
+  if (daysLeft < 0) return { label: `${Math.abs(daysLeft)}d OVERDUE`, overdue: true, daysLeft };
+  if (daysLeft === 0) return { label: "DUE TODAY", overdue: false, urgent: true, daysLeft };
+  if (daysLeft === 1) return { label: "1 day left", overdue: false, urgent: true, daysLeft };
+  return { label: `${daysLeft} days left`, overdue: false, urgent: false, daysLeft };
+}
+
+// ─── CONSTANTS ────────────────────────────────────────────────────────────────
+const SPECIAL_TARGETS = [
+  { id: "__anyone__",  name: "Anyone",           emoji: "🫵" },
+  { id: "__factory__", name: "The Whole Factory", emoji: "🏭" },
+];
+
+const CONDITION_PLACEHOLDERS = [
+  "he ever gets two cats",
+  "she finishes a Kirkland muffin in one sitting",
+  "the printer jams again before Friday",
+  "anyone sleeps on the laser mezzanine",
+  "he replies to emails within 24 hours",
+  "Tim says JavaScript is 'basically easy' again",
+];
+
+const TRIGGER_LABELS = [
+  "🚨 IT HAPPENED",
+  "⚡ CONDITION MET",
+  "💥 DOG UNLOCKED",
+  "🎯 TRIGGERED",
+  "🔔 DING DING DING",
+  "🌋 THE PROPHECY FULFILLED",
+  "🎪 IT'S REAL NOW",
+  "🐾 THE PAW HAS DROPPED",
+];
+
+const SHAME_MSGS = [
+  "currently DROWNING in dog debt",
+  "a certified hot dog disaster",
+  "Costco food court's biggest involuntary fan",
+  "needs to visit the $1.50 window ASAP",
+  "basically a hot dog ATM at this point",
+];
+const GLORY_MSGS = [
+  "absolutely FEASTING",
+  "living the $1.50 life",
+  "a prophet among mortals",
+  "dining like Costco royalty",
+  "achieved hot dog enlightenment",
+];
+
+// ─── AWARDS ──────────────────────────────────────────────────────────────────
+const AWARDS = [
+  // PINNED — always shown on board if someone qualifies
+  {
+    id: "top_eater",
+    pinned: true,
+    emoji: "🏆",
+    title: "The Sovereign of Snacks",
+    desc: (n) => `Has eaten ${n} dogs. Feasting on the suffering of others.`,
+    color: YELLOW,
+    textColor: "#7A5700",
+    calc: (p) => p.dogsEaten,
+    min: 1,
+  },
+  {
+    id: "top_debtor",
+    pinned: true,
+    emoji: "💸",
+    title: "The ATM",
+    desc: (n) => `Has paid ${n} $1.50 charges. A human vending machine.`,
+    color: RED,
+    textColor: "#fff",
+    calc: (p) => p.charges,
+    min: 1,
+  },
+  {
+    id: "most_pending",
+    pinned: true,
+    emoji: "🎲",
+    title: "Living Dangerously",
+    desc: (n) => `Has ${n} dogs on the line right now. Reckless. Unhinged. Respected.`,
+    color: ORANGE,
+    textColor: "#fff",
+    calc: (p) => p.pending,
+    min: 1,
+  },
+  // ROTATING — cycle through on the board, always shown on profiles
+  {
+    id: "overachiever",
+    pinned: false,
+    emoji: "🍗",
+    title: "The Overachiever",
+    desc: (n) => `${n} Executive-level bet${n !== 1 ? "s" : ""} on record. Swinging for the rotisserie.`,
+    color: PURPLE,
+    textColor: "#fff",
+    calc: (p, _bets, _settled) => {
+      const all = [..._bets, ..._settled];
+      return all.filter(b => b.debtorId === p.id && b.executive).length;
+    },
+    min: 1,
+  },
+  {
+    id: "mercy_invoker",
+    pinned: false,
+    emoji: "🪄",
+    title: "The Mercy Seeker",
+    desc: () => `Has invoked the Kirkland Mercy Rule. Brought churros. Walked free.`,
+    color: "#1a472a",
+    textColor: "#fff",
+    calc: (p, _bets, _settled) => _settled.filter(b => b.debtorId === p.id && b.mercyRule).length > 0 ? 1 : 0,
+    min: 1,
+  },
+  {
+    id: "clean_slate",
+    pinned: false,
+    emoji: "😇",
+    title: "Suspicious Innocence",
+    desc: () => `Zero dogs owed, zero dogs eaten. Either very lucky or very boring.`,
+    color: "#aaa",
+    textColor: "#fff",
+    calc: (p) => (p.dogsEaten === 0 && p.charges === 0 && p.pending === 0 && p.triggered === 0) ? 1 : 0,
+    min: 1,
+  },
+  {
+    id: "rivalry",
+    pinned: false,
+    emoji: "⚔️",
+    title: "The Rivalry",
+    desc: (n, extra) => `${n} bets against ${extra}. This is personal.`,
+    color: "#c0392b",
+    textColor: "#fff",
+    calcSpecial: true, // handled separately
+    min: 2,
+  },
+  {
+    id: "most_triggered",
+    pinned: false,
+    emoji: "🚨",
+    title: "The Delinquent",
+    desc: (n) => `Currently owes ${n} triggered dogs. Actively ignoring the deadline.`,
+    color: ORANGE,
+    textColor: "#fff",
+    calc: (p) => p.triggered,
+    min: 1,
+  },
+  {
+    id: "all_business",
+    pinned: false,
+    emoji: "📈",
+    title: "All Business",
+    desc: (n) => `${n} total bets — more contracts than a sports agent.`,
+    color: BLUE,
+    textColor: "#fff",
+    calc: (p, bets, settled) => {
+      const all = [...bets, ...settled];
+      return all.filter(b => b.debtorId === p.id || b.recipientId === p.id).length;
+    },
+    min: 5,
+  },
+];
+
+function computeAwards(people, bets, settled) {
+  // Returns array of { award, winner, value, extra }
+  const stats = people.map(p => ({
+    ...p,
+    dogsEaten: settled.filter(b => b.recipientId === p.id).length,
+    charges:   settled.filter(b => b.debtorId === p.id).length,
+    pending:   bets.filter(b => b.debtorId === p.id && b.status === "pending").length,
+    triggered: bets.filter(b => b.debtorId === p.id && b.status === "triggered").length,
+    pendingForMe: bets.filter(b => b.recipientId === p.id && b.status === "pending").length,
+    owedToMe:  bets.filter(b => b.recipientId === p.id && b.status === "triggered").length,
+  }));
+
+  const results = [];
+
+  for (const award of AWARDS) {
+    if (award.calcSpecial) {
+      // Rivalry — find pair with most shared bets
+      const pairCount = {};
+      const allBets = [...bets, ...settled];
+      for (const b of allBets) {
+        const ids = [b.debtorId, b.recipientId].filter(id => !id.startsWith("__")).sort();
+        if (ids.length === 2) {
+          const key = ids.join("|");
+          pairCount[key] = (pairCount[key] || 0) + 1;
+        }
+      }
+      const topPair = Object.entries(pairCount).sort((a, b) => b[1] - a[1])[0];
+      if (topPair && topPair[1] >= award.min) {
+        const [id1, id2] = topPair[0].split("|");
+        const p1 = people.find(p => p.id === id1);
+        const p2 = people.find(p => p.id === id2);
+        if (p1 && p2) {
+          results.push({ award, winner: p1, value: topPair[1], extra: p2.name, rivalName: p2.name });
+        }
+      }
+      continue;
+    }
+
+    const scored = stats.map(p => ({ p, val: award.calc(p, bets, settled) }))
+      .filter(x => x.val >= award.min)
+      .sort((a, b) => b.val - a.val);
+
+    if (scored.length > 0) {
+      results.push({ award, winner: scored[0].p, value: scored[0].val, extra: null });
+    }
+  }
+
+  return results;
+}
+
+const INITIAL_STATE = { people: [], bets: [], settled: [] };
+
+// ─── PERSISTENCE ──────────────────────────────────────────────────────────────
+const API_URL = "https://script.google.com/macros/s/AKfycbw7gdRD9FWDb5j7F7IjoJQhkFPq7DkfTHArgNI-QCP-AlsWz0Ay4rT9Bhh0VZN-Omj_/exec";
+
+async function loadState(pwd) {
+  try {
+    const res = await fetch(API_URL + "?action=load&pwd=" + encodeURIComponent(pwd));
+    const data = await res.json();
+    if (data.error) return null;
+    return data.state || INITIAL_STATE;
+  } catch {
+    return null;
+  }
+}
+
+async function saveState(s, pwd) {
+  try {
+    await fetch(API_URL, {
+      method: "POST",
+      body: JSON.stringify({ action: "save", state: s, pwd }),
+    });
+  } catch {}
+}
+
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
+function initials(name) { return name.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2); }
+
+function recInfo(recipientId, people) {
+  const sp = SPECIAL_TARGETS.find(t => t.id === recipientId);
+  if (sp) return { label: sp.name, emoji: sp.emoji, special: true };
+  const p = people.find(x => x.id === recipientId);
+  return { label: p?.name ?? "?", emoji: null, special: false, person: p };
+}
+
+function fmtDate(iso) {
+  if (!iso) return "";
+  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+function personStats(personId, bets, settled) {
+  const pending   = bets.filter(b => b.debtorId === personId && b.status === "pending").length;
+  const triggered = bets.filter(b => b.debtorId === personId && b.status === "triggered").length;
+  const pendingForMe = bets.filter(b => b.recipientId === personId && b.status === "pending").length;
+  const owedToMe     = bets.filter(b => b.recipientId === personId && b.status === "triggered").length;
+  const dogsEaten = settled.filter(b => b.recipientId === personId).length;
+  const charges   = settled.filter(b => b.debtorId   === personId).length;
+  return { pending, triggered, pendingForMe, owedToMe, dogsEaten, charges, totalDebt: pending + triggered };
+}
+
+// ─── COMPONENTS ───────────────────────────────────────────────────────────────
+function Avatar({ name, size = 38 }) {
+  const PALETTE = [RED, BLUE, YELLOW, "#9B59B6", "#E67E22", GREEN];
+  const col = PALETTE[name.split("").reduce((a, c) => a + c.charCodeAt(0), 0) % PALETTE.length];
+  return (
+    <div style={{
+      width: size, height: size, borderRadius: "50%", flexShrink: 0,
+      background: col, color: col === YELLOW ? "#333" : "#fff",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      fontWeight: 900, fontSize: size * 0.36, fontFamily: "'Black Han Sans', sans-serif",
+      border: "2px solid rgba(255,255,255,0.2)",
+    }}>{initials(name)}</div>
+  );
+}
+
+function Tab({ label, active, onClick, badge }) {
+  return (
+    <button onClick={onClick} style={{
+      flex: 1, padding: "12px 2px", border: "none",
+      background: active ? "#fff" : "transparent",
+      color: active ? RED : "rgba(255,255,255,0.72)",
+      fontWeight: 900, fontSize: 12,
+      borderBottom: active ? `3px solid ${RED}` : "3px solid transparent",
+      cursor: "pointer", fontFamily: "'Black Han Sans', sans-serif",
+      position: "relative", transition: "all 0.12s",
+    }}>
+      {label}
+      {badge > 0 && (
+        <span style={{
+          position: "absolute", top: 5, right: 4,
+          background: YELLOW, color: "#000",
+          borderRadius: "50%", width: 17, height: 17,
+          fontSize: 9, fontWeight: 900,
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>{badge}</span>
+      )}
+    </button>
+  );
+}
+
+function BottomSheet({ title, onClose, children, accent }) {
+  return (
+    <div style={{
+      position: "fixed", inset: 0, background: "rgba(0,0,40,0.72)",
+      zIndex: 998, display: "flex", alignItems: "flex-end",
+    }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{
+        width: "100%", maxHeight: "93vh", overflowY: "auto",
+        background: "#fff", borderRadius: "22px 22px 0 0",
+        padding: "22px 20px 52px",
+        boxShadow: "0 -10px 50px rgba(0,0,0,0.35)",
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
+          <h2 style={{ margin: 0, color: accent || RED, fontFamily: "'Black Han Sans', sans-serif", fontSize: 21 }}>{title}</h2>
+          <button onClick={onClose} style={{
+            background: "#eee", border: "none", borderRadius: "50%",
+            width: 30, height: 30, fontSize: 17, cursor: "pointer", fontWeight: 700, color: "#555",
+          }}>×</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// ── MINI BET CARD (for profile view) ─────────────────────────────────────────
+function MiniBetCard({ bet, people, isSettled, personId }) {
+  const debtor = people.find(p => p.id === bet.debtorId);
+  const rec = recInfo(bet.recipientId, people);
+  const isDebtor = bet.debtorId === personId;
+  const date = fmtDate(isSettled ? bet.settledDate : bet.date);
+
+  const statusColor = isSettled ? GREEN : bet.status === "triggered" ? ORANGE : "#999";
+  const statusLabel = isSettled ? "✅ Settled" : bet.status === "triggered" ? "🚨 Triggered" : "⏳ Pending";
+
+  return (
+    <div style={{
+      background: "#fff", borderRadius: 12, padding: "11px 13px", marginBottom: 8,
+      border: `2px solid ${isSettled ? "#e8e8e8" : bet.status === "triggered" ? ORANGE : "#eee"}`,
+      opacity: isSettled ? 0.8 : 1,
+    }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 5 }}>
+        <div style={{ fontSize: 11, fontWeight: 900, color: isDebtor ? RED : GREEN, letterSpacing: 0.5 }}>
+          {isDebtor ? "💸 YOU OWE" : "🏆 OWED TO YOU"}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ fontSize: 10, color: statusColor, fontWeight: 700 }}>{statusLabel}</span>
+          <span style={{ fontSize: 10, color: "#bbb" }}>{date}</span>
+        </div>
+      </div>
+      <div style={{ fontSize: 13, fontWeight: 700, color: "#222", lineHeight: 1.4 }}>
+        🌭 {isDebtor
+          ? `You owe ${rec.label} a hot dog if ${bet.condition}`
+          : `${debtor?.name ?? "?"} owes ${rec.label} a hot dog if ${bet.condition}`}
+      </div>
+    </div>
+  );
+}
+
+// ── FULL BET CARD ─────────────────────────────────────────────────────────────
+function BetCard({ bet, people, onTrigger, onSettle, triggerLabelIdx, adminMode, onEdit, onDelete, onMercy }) {
+  const debtor = people.find(p => p.id === bet.debtorId);
+  if (!debtor) return null;
+  const rec         = recInfo(bet.recipientId, people);
+  const isPending   = bet.status === "pending";
+  const isTriggered = bet.status === "triggered";
+  const isExec      = !!bet.executive;
+  const trigLabel   = TRIGGER_LABELS[triggerLabelIdx % TRIGGER_LABELS.length];
+  const item        = isExec ? "a Rotisserie Chicken 🍗" : "a hot dog";
+  const sentence    = `${debtor.name} owes ${rec.label} ${item} if ${bet.condition}`;
+  const deadline    = isTriggered ? businessDayStatus(bet.triggeredDate) : null;
+
+  // Card colors based on state
+  const borderCol = isExec && isTriggered ? CHICKEN_GOLD
+    : isExec ? PURPLE
+    : isTriggered ? ORANGE : "#e8e8e8";
+  const bannerBg = isExec
+    ? `linear-gradient(90deg, ${PURPLE}, ${CHICKEN_GOLD})`
+    : `linear-gradient(90deg, ${ORANGE}, #FF9800)`;
+  const cardBg = isExec && isTriggered
+    ? "linear-gradient(135deg, #FFF8E1 0%, #FFF3CD 100%)"
+    : isTriggered ? "linear-gradient(135deg, #FFF3E0 0%, #FFF8F0 100%)"
+    : isExec ? "linear-gradient(135deg, #F9F0FF 0%, #FFF 100%)"
+    : "#fff";
+
+  return (
+    <div style={{
+      background: cardBg,
+      border: `2px solid ${borderCol}`,
+      borderRadius: 16, padding: "14px 14px 12px", marginBottom: 12,
+      boxShadow: isTriggered || isExec ? `0 0 0 3px ${borderCol}22, 3px 3px 0 ${borderCol}` : "2px 2px 0 #e0e0e0",
+      position: "relative", overflow: "hidden", transition: "all 0.3s",
+    }}>
+      {/* Status banner */}
+      {(isTriggered || isExec) && (
+        <div style={{
+          position: "absolute", top: 0, left: 0, right: 0,
+          background: isTriggered ? bannerBg : `linear-gradient(90deg, ${PURPLE}, #9C4DB8)`,
+          padding: "4px 14px",
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+        }}>
+          <span style={{ color: "#fff", fontWeight: 900, fontSize: 11, fontFamily: "'Black Han Sans', sans-serif", letterSpacing: 1 }}>
+            {isTriggered && isExec ? "🍗 EXECUTIVE TRIGGERED — CHICKEN OWED" :
+             isTriggered ? "🚨 CONDITION TRIGGERED — DOG OWED" :
+             "🍗 EXECUTIVE MULTIPLIER — ROTISSERIE STAKES"}
+          </span>
+          {bet.triggeredDate && <span style={{ color: "rgba(255,255,255,0.8)", fontSize: 10 }}>{fmtDate(bet.triggeredDate)}</span>}
+        </div>
+      )}
+
+      <div style={{ marginTop: (isTriggered || isExec) ? 28 : 0 }}>
+        {/* People row */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+          <Avatar name={debtor.name} size={34} />
+          <div>
+            <div style={{ fontWeight: 900, fontSize: 13, fontFamily: "'Black Han Sans', sans-serif" }}>{debtor.name}</div>
+            <div style={{ fontSize: 10, color: isTriggered ? ORANGE : isExec ? PURPLE : "#bbb" }}>
+              {isTriggered ? (isExec ? "🍗 CHICKEN DEBTOR" : "💸 DOG DEBTOR") : isExec ? "🍗 exec-level bet" : "💤 on the hook"}
+            </div>
+          </div>
+          <div style={{ flex: 1, textAlign: "center", fontSize: 16, color: isTriggered ? ORANGE : isExec ? PURPLE : "#ccc" }}>
+            {isExec ? "→ 🍗 →" : "→ 🌭 →"}
+          </div>
+          {rec.special ? (
+            <div style={{
+              background: isTriggered ? (isExec ? CHICKEN_GOLD : ORANGE) : isExec ? PURPLE : YELLOW,
+              borderRadius: 20, padding: "5px 11px",
+              fontWeight: 900, fontSize: 12, color: "#fff",
+              fontFamily: "'Black Han Sans', sans-serif",
+            }}>{rec.emoji} {rec.label}</div>
+          ) : rec.person ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontWeight: 900, fontSize: 13, fontFamily: "'Black Han Sans', sans-serif" }}>{rec.person.name}</div>
+                <div style={{ fontSize: 10, color: isTriggered ? GREEN : "#bbb" }}>
+                  {isTriggered ? (isExec ? "🍗 COLLECT CHICKEN" : "🍽️ COLLECT NOW") : "🏆 collecting"}
+                </div>
+              </div>
+              <Avatar name={rec.person.name} size={34} />
+            </div>
+          ) : null}
+        </div>
+
+        {/* Sentence */}
+        <div style={{
+          background: isExec && isTriggered ? "#FFF8E1"
+            : isExec ? "#F5EEFF"
+            : isTriggered ? "#FFF0DC" : "#FFFBEA",
+          borderRadius: 9, padding: "9px 12px", marginBottom: 11,
+          borderLeft: `4px solid ${isExec ? PURPLE : isTriggered ? ORANGE : YELLOW}`,
+          fontWeight: 700, fontSize: 13, color: "#222", lineHeight: 1.5,
+        }}>
+          {isExec ? "🍗" : "🌭"} {sentence}
+        </div>
+
+        {/* Deadline countdown for triggered bets */}
+        {isTriggered && deadline && (
+          <div style={{
+            display: "flex", alignItems: "center", gap: 6,
+            marginBottom: 10, padding: "6px 10px", borderRadius: 8,
+            background: deadline.overdue ? "#FFF0F0" : deadline.urgent ? "#FFF8E1" : "#F0F8F0",
+            border: `1px solid ${deadline.overdue ? RED : deadline.urgent ? YELLOW : GREEN}44`,
+          }}>
+            <span style={{ fontSize: 14 }}>{deadline.overdue ? "🔴" : deadline.urgent ? "⚠️" : "🟢"}</span>
+            <span style={{ fontSize: 11, fontWeight: 900, color: deadline.overdue ? RED : deadline.urgent ? "#B8860B" : GREEN }}>
+              {deadline.overdue ? `OVERDUE by ${deadline.label}` : `Due in ${deadline.label}`} — 5 business day rule
+            </span>
+          </div>
+        )}
+
+        {/* Action row */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 10, color: "#bbb", flexShrink: 0 }}>📅 {fmtDate(bet.date)}</span>
+          {isPending && (
+            <button onClick={() => onTrigger(bet.id)} style={{
+              background: isExec ? `linear-gradient(135deg, ${PURPLE}, ${CHICKEN_GOLD})` : `linear-gradient(135deg, ${ORANGE}, #FF9800)`,
+              color: "#fff", border: "none", borderRadius: 20,
+              padding: "7px 14px", fontWeight: 900, fontSize: 12,
+              cursor: "pointer", fontFamily: "'Black Han Sans', sans-serif",
+              boxShadow: `0 2px 8px ${isExec ? PURPLE : ORANGE}55`, whiteSpace: "nowrap",
+            }}>{trigLabel}</button>
+          )}
+          {isTriggered && (
+            <button onClick={() => onSettle(bet.id)} style={{
+              background: isExec ? `linear-gradient(135deg, ${CHICKEN_GOLD}, #A0680A)` : `linear-gradient(135deg, ${GREEN}, #388E3C)`,
+              color: "#fff", border: "none", borderRadius: 20,
+              padding: "7px 16px", fontWeight: 900, fontSize: 12,
+              cursor: "pointer", fontFamily: "'Black Han Sans', sans-serif",
+              boxShadow: `0 2px 8px ${isExec ? CHICKEN_GOLD : GREEN}55`,
+              animation: "pulse 1.8s ease-in-out infinite", whiteSpace: "nowrap",
+            }}>{isExec ? "🍗 Chicken Delivered!" : "🌭 Dog Delivered!"}</button>
+          )}
+        </div>
+
+        {/* Mercy Rule button — only for triggered bets where debtor owes 3+ people */}
+        {isTriggered && onMercy && (
+          <div style={{ marginTop: 8 }}>
+            <button onClick={() => onMercy(bet.debtorId)} style={{
+              width: "100%", padding: "7px", fontSize: 11, fontWeight: 900,
+              background: "linear-gradient(135deg, #1a472a, #2d6a4f)",
+              color: "#fff", border: "none", borderRadius: 12, cursor: "pointer",
+              fontFamily: "'Black Han Sans', sans-serif", letterSpacing: 0.5,
+            }}>
+              🪄 Invoke Kirkland Mercy Rule — Settle All {onMercy.count} Dogs at Once
+            </button>
+          </div>
+        )}
+
+        {/* Admin strip */}
+        {adminMode && (
+          <div style={{
+            display: "flex", gap: 6, marginTop: 10,
+            paddingTop: 10, borderTop: "1px dashed #eee",
+          }}>
+            <div style={{ fontSize: 9, color: "#ccc", fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", alignSelf: "center", flex: 1 }}>
+              🔓 ADMIN
+            </div>
+            <button onClick={() => onEdit(bet)} style={{
+              background: "#f0f4ff", color: BLUE, border: `1px solid ${BLUE}44`,
+              borderRadius: 16, padding: "5px 12px", fontWeight: 900, fontSize: 11, cursor: "pointer",
+            }}>✏️ Edit</button>
+            <button onClick={() => onDelete(bet.id)} style={{
+              background: "#fff0f0", color: RED, border: `1px solid ${RED}44`,
+              borderRadius: 16, padding: "5px 12px", fontWeight: 900, fontSize: 11, cursor: "pointer",
+            }}>🗑️ Delete</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── FIELD STYLES ────────────────────────────────────────────────────────────
+const inp = {
+  width: "100%", padding: "11px 13px",
+  border: "2px solid #e0e0e0", borderRadius: 10,
+  fontSize: 15, fontFamily: "inherit",
+  boxSizing: "border-box", outline: "none",
+  marginBottom: 11, background: "#fff",
+};
+const sel = { ...inp, appearance: "none" };
+const lbl = { fontWeight: 700, color: "#555", fontSize: 13, marginBottom: 5, display: "block" };
+
+// ─── RULE CARD ───────────────────────────────────────────────────────────────
+function RuleCard({ emoji, number, title, color, accent, rules }) {
+  const [expanded, setExpanded] = useState(true);
+  return (
+    <div style={{
+      background: "#fff", borderRadius: 16, marginBottom: 12,
+      border: `2px solid ${color}22`,
+      boxShadow: `2px 2px 0 ${color}22`,
+      overflow: "hidden",
+    }}>
+      {/* Header */}
+      <div
+        onClick={() => setExpanded(e => !e)}
+        style={{
+          display: "flex", alignItems: "center", gap: 12,
+          padding: "14px 16px", cursor: "pointer",
+          background: `linear-gradient(135deg, ${color}12, ${color}06)`,
+          borderBottom: expanded ? `1px solid ${color}22` : "none",
+        }}
+      >
+        <div style={{
+          width: 44, height: 44, borderRadius: 12, flexShrink: 0,
+          background: accent ? `linear-gradient(135deg, ${color}, ${accent})` : color,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: 22,
+        }}>{emoji}</div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 9, color: color, fontWeight: 900, letterSpacing: 2, textTransform: "uppercase", marginBottom: 1 }}>
+            Article {number}
+          </div>
+          <div style={{ fontWeight: 900, fontSize: 16, fontFamily: "'Black Han Sans', sans-serif", color: "#222" }}>
+            {title}
+          </div>
+        </div>
+        <div style={{ fontSize: 18, color: "#ccc", transform: expanded ? "rotate(90deg)" : "none", transition: "transform 0.2s" }}>›</div>
+      </div>
+
+      {/* Rules list */}
+      {expanded && (
+        <div style={{ padding: "12px 16px 14px" }}>
+          {rules.map((rule, i) => (
+            <div key={i} style={{
+              display: "flex", gap: 10, marginBottom: i < rules.length - 1 ? 10 : 0,
+              paddingBottom: i < rules.length - 1 ? 10 : 0,
+              borderBottom: i < rules.length - 1 ? "1px solid #f0f0f0" : "none",
+            }}>
+              <div style={{
+                width: 20, height: 20, borderRadius: "50%", flexShrink: 0,
+                background: accent ? `linear-gradient(135deg, ${color}, ${accent})` : color,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 10, color: "#fff", fontWeight: 900, marginTop: 1,
+              }}>{i + 1}</div>
+              <div style={{ fontSize: 13, color: "#444", lineHeight: 1.5 }}>{rule}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── AWARD CARD ──────────────────────────────────────────────────────────────
+function AwardCard({ award, winner, value, extra, people, size = "full" }) {
+  if (!winner) return null;
+  const isCompact = size === "compact";
+  return (
+    <div style={{
+      background: `linear-gradient(135deg, ${award.color}EE, ${award.color}BB)`,
+      borderRadius: isCompact ? 12 : 14,
+      padding: isCompact ? "10px 12px" : "14px 16px",
+      marginBottom: isCompact ? 8 : 10,
+      display: "flex", alignItems: "center", gap: isCompact ? 10 : 12,
+      boxShadow: `0 2px 8px ${award.color}44`,
+      position: "relative", overflow: "hidden",
+    }}>
+      <div style={{
+        position: "absolute", right: -10, top: -10,
+        fontSize: isCompact ? 48 : 60, opacity: 0.12,
+        transform: "rotate(15deg)", pointerEvents: "none",
+      }}>{award.emoji}</div>
+      <div style={{
+        width: isCompact ? 36 : 44, height: isCompact ? 36 : 44,
+        borderRadius: isCompact ? 10 : 12, flexShrink: 0,
+        background: "rgba(255,255,255,0.25)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        fontSize: isCompact ? 18 : 22,
+      }}>{award.emoji}</div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{
+          fontSize: isCompact ? 9 : 9, color: "rgba(255,255,255,0.75)",
+          fontWeight: 900, letterSpacing: 2, textTransform: "uppercase", marginBottom: 1,
+        }}>Award</div>
+        <div style={{
+          fontFamily: "'Black Han Sans', sans-serif",
+          fontSize: isCompact ? 13 : 15, color: award.textColor || "#fff",
+          lineHeight: 1.2, marginBottom: 2,
+        }}>{award.title}</div>
+        <div style={{ fontSize: isCompact ? 10 : 11, color: "rgba(255,255,255,0.85)", lineHeight: 1.3 }}>
+          {award.desc(value, extra)}
+        </div>
+      </div>
+      <div style={{ textAlign: "right", flexShrink: 0 }}>
+        <div style={{ fontSize: isCompact ? 10 : 11, color: "rgba(255,255,255,0.7)", marginBottom: 2 }}>🏅 holder</div>
+        <div style={{ fontWeight: 900, fontSize: isCompact ? 12 : 13, color: "#fff", fontFamily: "'Black Han Sans', sans-serif" }}>
+          {winner.name}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── STAT PILL ────────────────────────────────────────────────────────────────
+function StatPill({ value, label, color, emoji }) {
+  return (
+    <div style={{
+      background: "#fff", borderRadius: 12, padding: "12px 10px",
+      textAlign: "center", flex: 1,
+      border: `2px solid ${color}22`,
+      boxShadow: `0 2px 0 ${color}22`,
+    }}>
+      <div style={{ fontSize: 22, marginBottom: 2 }}>{emoji}</div>
+      <div style={{ fontWeight: 900, fontSize: 22, color, fontFamily: "'Black Han Sans', sans-serif" }}>{value}</div>
+      <div style={{ fontSize: 10, color: "#999", fontWeight: 700, lineHeight: 1.2, marginTop: 2 }}>{label}</div>
+    </div>
+  );
+}
+
+// ─── APP ─────────────────────────────────────────────────────────────────────
+function App() {
+  const [password, setPassword]   = useState(() => localStorage.getItem("hdl-pwd") || "");
+  const [authed, setAuthed]       = useState(false);
+  const [authError, setAuthError] = useState(false);
+  const [loading, setLoading]     = useState(false);
+  const [pwdInput, setPwdInput]   = useState("");
+  const [state, setState]         = useState(INITIAL_STATE);
+  const [tab, setTab]             = useState("bets");
+  const [adminMode, setAdmin]     = useState(false);
+  const [showBetForm, setShowBetForm] = useState(false);
+  const [editingBet, setEditingBet]   = useState(null);  // bet object being edited
+  const [editForm, setEditForm]       = useState(null);  // form state for edit
+  const [newName, setNewName]     = useState("");
+  const [toast, setToast]         = useState(null);
+  const [phIdx]                   = useState(() => Math.floor(Math.random() * CONDITION_PLACEHOLDERS.length));
+  const [profilePerson, setProfilePerson] = useState(null); // person object
+  const [showFilters, setShowFilters]     = useState(false);
+  const [filters, setFilters] = useState({
+    debtorId: "", recipientId: "", status: "", dateFrom: "", dateTo: "",
+  });
+
+  const [form, setForm] = useState({
+    debtorId: "", recipientId: "", condition: "",
+    date: new Date().toISOString().slice(0, 10),
+    executive: false,
+  });
+  const [mercyDebtorId, setMercyDebtorId] = useState(null); // who is invoking mercy rule
+  const [showMercyConfirm, setShowMercyConfirm] = useState(false);
+
+  // Load state on auth
+  useEffect(() => {
+    if (!authed || !password) return;
+    setLoading(true);
+    loadState(password).then(s => {
+      if (s) setState(s);
+      setLoading(false);
+    });
+  }, [authed]);
+
+  // Save state whenever it changes (debounced)
+  const saveTimer = React.useRef(null);
+  useEffect(() => {
+    if (!authed || !password) return;
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => saveState(state, password), 1200);
+  }, [state]);
+
+  async function handleLogin() {
+    if (!pwdInput.trim()) return;
+    setLoading(true);
+    setAuthError(false);
+    const s = await loadState(pwdInput.trim());
+    if (s) {
+      setPassword(pwdInput.trim());
+      localStorage.setItem("hdl-pwd", pwdInput.trim());
+      setState(s);
+      setAuthed(true);
+    } else {
+      setAuthError(true);
+    }
+    setLoading(false);
+  }
+
+  function toast_(msg) { setToast(msg); setTimeout(() => setToast(null), 2800); }
+
+  // ── People ────────────────────────────────────────────────────────────────
+  function addPerson() {
+    const name = newName.trim();
+    if (!name) return;
+    if (state.people.find(p => p.name.toLowerCase() === name.toLowerCase()))
+      return toast_("That name's already in the dog pound 👀");
+    setState(s => ({ ...s, people: [...s.people, { id: Date.now().toString(), name }] }));
+    setNewName("");
+    toast_(`${name} added! Fresh meat for the ledger. 🌭`);
+  }
+
+  function removePerson(id) {
+    setState(s => ({
+      ...s,
+      people: s.people.filter(p => p.id !== id),
+      bets:   s.bets.filter(b => b.debtorId !== id && b.recipientId !== id),
+    }));
+    toast_("Removed. They have escaped… for now. 🕵️");
+  }
+
+  // ── Bets ──────────────────────────────────────────────────────────────────
+  function addBet() {
+    if (!form.debtorId || !form.recipientId || !form.condition.trim())
+      return toast_("Fill everything out! The hot dog gods demand it. 🌭");
+    if (form.debtorId === form.recipientId)
+      return toast_("You can't owe yourself a dog. That's just lunch. 🤔");
+    setState(s => ({
+      ...s,
+      bets: [...s.bets, {
+        ...form,
+        condition: form.condition.trim(),
+        id: Date.now().toString(),
+        status: "pending",
+        date: form.date || new Date().toISOString().slice(0, 10),
+      }],
+    }));
+    const isExec = form.executive;
+    setForm({ debtorId: "", recipientId: "", condition: "", date: new Date().toISOString().slice(0, 10), executive: false });
+    setShowBetForm(false);
+    toast_(isExec ? "🍗 EXECUTIVE BET LOGGED. Rotisserie stakes are ON." : "Bet logged. The countdown begins. ⏳🌭");
+  }
+
+  function triggerBet(id) {
+    setState(s => ({
+      ...s,
+      bets: s.bets.map(b => b.id === id
+        ? { ...b, status: "triggered", triggeredDate: new Date().toISOString() }
+        : b),
+    }));
+    toast_("CONDITION MET. The dog is now officially owed. 🚨🌭");
+  }
+
+  function settleBet(id) {
+    const bet = state.bets.find(b => b.id === id);
+    if (!bet) return;
+    setState(s => ({
+      ...s,
+      bets:    s.bets.filter(b => b.id !== id),
+      settled: [...s.settled, { ...bet, settledDate: new Date().toISOString() }],
+    }));
+    toast_("Dog delivered. Justice has been served. Deliciously. 🌭✅");
+  }
+
+  function openEdit(bet) {
+    setEditingBet(bet);
+    setEditForm({
+      debtorId:    bet.debtorId,
+      recipientId: bet.recipientId,
+      condition:   bet.condition,
+      date:        bet.date,
+      status:      bet.status,
+      executive:   !!bet.executive,
+    });
+  }
+
+  function saveEdit() {
+    if (!editForm.debtorId || !editForm.recipientId || !editForm.condition.trim())
+      return toast_("Fill everything out, even in admin mode. 🌭");
+    if (editForm.debtorId === editForm.recipientId)
+      return toast_("A person cannot owe themselves a dog. Come on. 🤦");
+    setState(s => ({
+      ...s,
+      bets: s.bets.map(b => b.id === editingBet.id
+        ? { ...b, ...editForm, condition: editForm.condition.trim() }
+        : b),
+    }));
+    setEditingBet(null);
+    setEditForm(null);
+    toast_("Bet updated. The ledger has been amended. 📝🌭");
+  }
+
+  function deleteBet(id) {
+    setState(s => ({ ...s, bets: s.bets.filter(b => b.id !== id) }));
+    toast_("Bet deleted. It never happened. 🕵️ (It happened.)");
+  }
+
+  function invokeMercyRule(debtorId) {
+    // Settle all triggered bets for this debtor at once
+    const toSettle = state.bets.filter(b => b.debtorId === debtorId && b.status === "triggered");
+    if (toSettle.length < 3) return toast_("Need 3+ triggered debts to invoke the Mercy Rule! 🪄");
+    const now = new Date().toISOString();
+    setState(s => ({
+      ...s,
+      bets:    s.bets.filter(b => !(b.debtorId === debtorId && b.status === "triggered")),
+      settled: [...s.settled, ...toSettle.map(b => ({ ...b, settledDate: now, mercyRule: true }))],
+    }));
+    setShowMercyConfirm(false);
+    setMercyDebtorId(null);
+    const debtor = state.people.find(p => p.id === debtorId);
+    toast_(`MERCY GRANTED! ${debtor?.name ?? "They"} brings churros/pizza for the group. 🍕🪄`);
+  }
+
+  // ── Filter logic ─────────────────────────────────────────────────────────
+  const activeFilterCount = Object.values(filters).filter(v => v !== "").length;
+
+  function applyFilters(bets) {
+    return bets.filter(b => {
+      if (filters.debtorId && b.debtorId !== filters.debtorId) return false;
+      if (filters.recipientId && b.recipientId !== filters.recipientId) return false;
+      if (filters.status && b.status !== filters.status) return false;
+      if (filters.dateFrom && b.date < filters.dateFrom) return false;
+      if (filters.dateTo   && b.date > filters.dateTo)   return false;
+      return true;
+    });
+  }
+
+  function applyFiltersSettled(bets) {
+    return bets.filter(b => {
+      if (filters.debtorId && b.debtorId !== filters.debtorId) return false;
+      if (filters.recipientId && b.recipientId !== filters.recipientId) return false;
+      if (filters.dateFrom && b.date < filters.dateFrom) return false;
+      if (filters.dateTo   && b.date > filters.dateTo)   return false;
+      return true;
+    });
+  }
+
+  const filteredBets    = applyFilters(state.bets);
+  const filteredTriggered = filteredBets.filter(b => b.status === "triggered");
+  const filteredPending   = filteredBets.filter(b => b.status === "pending");
+  const filteredSettled   = filters.status === "triggered" || filters.status === "pending"
+    ? [] : applyFiltersSettled(state.settled);
+
+  // ── Stats ─────────────────────────────────────────────────────────────────
+  const stats = state.people.map(p => ({
+    ...p,
+    ...personStats(p.id, state.bets, state.settled),
+  }));
+
+  const triggeredBets = state.bets.filter(b => b.status === "triggered");
+  const biggestDebtor = [...stats].sort((a, b) => b.triggered - a.triggered || b.pending - a.pending)[0];
+  const biggestWinner = [...stats].sort((a, b) => b.dogsEaten - a.dogsEaten)[0];
+
+  // Awards
+  const allAwards     = computeAwards(state.people, state.bets, state.settled);
+  const pinnedAwards  = allAwards.filter(a => a.award.pinned);
+  const rotatingAwards = allAwards.filter(a => !a.award.pinned);
+  const [rotatingIdx, setRotatingIdx] = useState(0);
+  useEffect(() => {
+    if (rotatingAwards.length === 0) return;
+    const t = setInterval(() => setRotatingIdx(i => (i + 1) % rotatingAwards.length), 4000);
+    return () => clearInterval(t);
+  }, [rotatingAwards.length]);
+  const currentRotating = rotatingAwards[rotatingIdx % Math.max(rotatingAwards.length, 1)];
+
+  // Preview sentence
+  const previewDebtor = state.people.find(p => p.id === form.debtorId);
+  const previewRec    = form.recipientId ? recInfo(form.recipientId, state.people) : null;
+  const preview       = previewDebtor && previewRec && form.condition.trim()
+    ? `${previewDebtor.name} owes ${previewRec.label} a hot dog if ${form.condition.trim()}`
+    : null;
+
+  // ── Profile data ──────────────────────────────────────────────────────────
+  const profileStats = profilePerson ? personStats(profilePerson.id, state.bets, state.settled) : null;
+  const profileActiveBets = profilePerson
+    ? state.bets.filter(b => b.debtorId === profilePerson.id || b.recipientId === profilePerson.id)
+    : [];
+  const profileSettledBets = profilePerson
+    ? state.settled.filter(b => b.debtorId === profilePerson.id || b.recipientId === profilePerson.id)
+    : [];
+
+  // ── Render ────────────────────────────────────────────────────────────────
+
+  // Login screen
+  if (!authed) {
+    return (
+      <div style={{
+        minHeight: "100vh", background: `linear-gradient(135deg, ${RED} 0%, #8B0000 100%)`,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        fontFamily: "'Segoe UI', sans-serif", padding: 24,
+      }}>
+        <div style={{
+          background: "#fff", borderRadius: 24, padding: "36px 28px",
+          maxWidth: 360, width: "100%", textAlign: "center",
+          boxShadow: "0 20px 60px rgba(0,0,0,0.4)",
+        }}>
+          <div style={{ fontSize: 56, marginBottom: 8 }}>🌭</div>
+          <div style={{ fontFamily: "'Black Han Sans', sans-serif", fontSize: 26, color: RED, marginBottom: 4 }}>
+            HOT DOG LEDGER
+          </div>
+          <div style={{ fontSize: 12, color: "#aaa", marginBottom: 28 }}>
+            Official™ Workplace Edition
+          </div>
+          <input
+            value={pwdInput}
+            onChange={e => { setPwdInput(e.target.value); setAuthError(false); }}
+            onKeyDown={e => e.key === "Enter" && handleLogin()}
+            placeholder="Enter the secret code word…"
+            type="password"
+            style={{
+              width: "100%", padding: "13px 16px", fontSize: 15,
+              border: `2px solid ${authError ? RED : "#e0e0e0"}`, borderRadius: 12,
+              boxSizing: "border-box", outline: "none", marginBottom: 10,
+              fontFamily: "inherit", textAlign: "center", letterSpacing: 2,
+            }}
+          />
+          {authError && (
+            <div style={{ color: RED, fontSize: 12, fontWeight: 700, marginBottom: 10 }}>
+              Wrong code. Try again. 🌭
+            </div>
+          )}
+          <button
+            onClick={handleLogin}
+            disabled={loading}
+            style={{
+              width: "100%", padding: "14px", background: loading ? "#ccc" : RED,
+              color: "#fff", border: "none", borderRadius: 12,
+              fontWeight: 900, fontSize: 16, cursor: loading ? "not-allowed" : "pointer",
+              fontFamily: "'Black Han Sans', sans-serif", letterSpacing: 1,
+            }}
+          >
+            {loading ? "⏳ Loading…" : "🌭 ENTER THE LEDGER"}
+          </button>
+          <div style={{ fontSize: 10, color: "#ccc", marginTop: 16 }}>
+            Ask your admin for the code word
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div style={{
+        minHeight: "100vh", background: `linear-gradient(135deg, ${RED} 0%, #8B0000 100%)`,
+        display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 16,
+      }}>
+        <div style={{ fontSize: 56 }}>🌭</div>
+        <div style={{ color: "#fff", fontFamily: "'Black Han Sans', sans-serif", fontSize: 20 }}>
+          Loading the ledger…
+        </div>
+      </div>
+    );
+  }
+
+  // ── Render ────────────────────────────────────────────────────────────────
+  return (
+    <div style={{
+      fontFamily: "'Segoe UI', sans-serif", background: "#F2F2F2",
+      minHeight: "100vh", maxWidth: 480, margin: "0 auto", paddingBottom: 110,
+    }}>
+
+      {/* ── HEADER ── */}
+      <div style={{ background: `linear-gradient(135deg, ${RED} 0%, #B01228 100%)`, padding: "20px 18px 0", color: "#fff" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div>
+            <div style={{ fontSize: 9, letterSpacing: 3.5, opacity: 0.65, textTransform: "uppercase", marginBottom: 2 }}>Official™ Workplace</div>
+            <h1 style={{ margin: 0, fontSize: 27, fontFamily: "'Black Han Sans', sans-serif", lineHeight: 1.1, letterSpacing: 1 }}>
+              HOT DOG<br />LEDGER 🌭
+            </h1>
+            <div style={{ fontSize: 10, opacity: 0.55, marginTop: 3 }}>$1.50 of shame per entry</div>
+          </div>
+          <div style={{ textAlign: "right", display: "flex", flexDirection: "column", gap: 5, alignItems: "flex-end" }}>
+            {triggeredBets.length > 0 && (
+              <div style={{
+                background: ORANGE, color: "#fff", borderRadius: 12, padding: "5px 11px",
+                fontWeight: 900, fontSize: 12, fontFamily: "'Black Han Sans', sans-serif",
+                animation: "pulse 1.5s ease-in-out infinite",
+              }}>
+                🚨 {triggeredBets.length} DOG{triggeredBets.length > 1 ? "S" : ""} OWED NOW
+              </div>
+            )}
+            <div style={{
+              background: YELLOW, color: "#000", borderRadius: 12, padding: "5px 11px",
+              fontWeight: 900, fontSize: 12, fontFamily: "'Black Han Sans', sans-serif",
+            }}>
+              {state.bets.length} ACTIVE BET{state.bets.length !== 1 ? "S" : ""}
+            </div>
+            <button onClick={() => setAdmin(a => !a)} style={{
+              background: "transparent", border: "1px solid rgba(255,255,255,0.32)",
+              color: "rgba(255,255,255,0.58)", borderRadius: 8, padding: "3px 9px",
+              fontSize: 9, cursor: "pointer", letterSpacing: 1.2,
+            }}>
+              {adminMode ? "🔓 ADMIN" : "🔒 ADMIN"}
+            </button>
+          </div>
+        </div>
+        <div style={{ display: "flex", marginTop: 14, gap: 1 }}>
+          {[
+            { key: "bets",    label: "🌭 Bets",  badge: triggeredBets.length },
+            { key: "board",   label: "🏆 Board" },
+            { key: "history", label: "📜 History" },
+            { key: "rules",   label: "📋 Rules" },
+          ].map(t => <Tab key={t.key} {...t} active={tab === t.key} onClick={() => setTab(t.key)} />)}
+        </div>
+      </div>
+
+      {/* ── ADMIN PANEL ── */}
+      {adminMode && (
+        <div style={{ background: BLUE, padding: "13px 18px" }}>
+          <div style={{ color: "#fff", fontWeight: 900, fontSize: 11, marginBottom: 7, letterSpacing: 1.5 }}>👤 MANAGE PEOPLE</div>
+          <div style={{ display: "flex", gap: 7 }}>
+            <input value={newName} onChange={e => setNewName(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && addPerson()}
+              placeholder="Add coworker name…"
+              style={{ ...inp, margin: 0, flex: 1, fontSize: 14, padding: "9px 12px" }}
+            />
+            <button onClick={addPerson} style={{
+              background: YELLOW, color: "#000", border: "none",
+              borderRadius: 10, padding: "9px 15px", fontWeight: 900, fontSize: 16, cursor: "pointer",
+            }}>+</button>
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 9 }}>
+            {state.people.map(p => (
+              <div key={p.id} style={{
+                background: "rgba(255,255,255,0.14)", color: "#fff",
+                borderRadius: 20, padding: "4px 10px 4px 12px",
+                fontSize: 13, display: "flex", alignItems: "center", gap: 6,
+              }}>
+                {p.name}
+                <button onClick={() => removePerson(p.id)} style={{
+                  background: "rgba(255,255,255,0.18)", border: "none",
+                  color: "#fff", borderRadius: "50%", width: 17, height: 17,
+                  fontSize: 11, cursor: "pointer",
+                }}>×</button>
+              </div>
+            ))}
+            {!state.people.length && <span style={{ color: "rgba(255,255,255,0.45)", fontSize: 13 }}>No coworkers yet… suspicious. 🕵️</span>}
+          </div>
+        </div>
+      )}
+
+      {/* ── CONTENT ── */}
+      <div style={{ padding: "14px 14px 0" }}>
+
+        {/* ── BETS TAB ── */}
+        {tab === "bets" && (
+          <>
+            {/* Filter bar */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <div style={{ fontSize: 12, color: "#aaa", fontWeight: 700 }}>
+                {filteredBets.length + filteredSettled.length} result{filteredBets.length + filteredSettled.length !== 1 ? "s" : ""}
+                {activeFilterCount > 0 && <span style={{ color: BLUE }}> (filtered)</span>}
+              </div>
+              <button onClick={() => setShowFilters(true)} style={{
+                background: activeFilterCount > 0 ? BLUE : "#fff",
+                color: activeFilterCount > 0 ? "#fff" : "#555",
+                border: `2px solid ${activeFilterCount > 0 ? BLUE : "#ddd"}`,
+                borderRadius: 20, padding: "6px 14px",
+                fontWeight: 900, fontSize: 12, cursor: "pointer",
+                display: "flex", alignItems: "center", gap: 6,
+              }}>
+                🔍 Filters {activeFilterCount > 0 && `(${activeFilterCount})`}
+              </button>
+            </div>
+
+            {filteredTriggered.length > 0 && (
+              <>
+                <div style={{
+                  background: `linear-gradient(90deg, ${ORANGE}, #FF9800)`,
+                  borderRadius: 10, padding: "7px 13px", marginBottom: 10,
+                  display: "flex", alignItems: "center", gap: 8,
+                }}>
+                  <span style={{ fontSize: 18 }}>🚨</span>
+                  <span style={{ color: "#fff", fontWeight: 900, fontSize: 13, fontFamily: "'Black Han Sans', sans-serif" }}>
+                    DOGS CURRENTLY OWED — PAY UP!
+                  </span>
+                </div>
+                {filteredTriggered.map((bet, i) => {
+                  const debtorTriggeredCount = state.bets.filter(b => b.debtorId === bet.debtorId && b.status === "triggered").length;
+                  const mercyFn = debtorTriggeredCount >= 3 ? Object.assign(() => { setMercyDebtorId(bet.debtorId); setShowMercyConfirm(true); }, { count: debtorTriggeredCount }) : null;
+                  return (
+                    <BetCard key={bet.id} bet={bet} people={state.people}
+                      onTrigger={triggerBet} onSettle={settleBet} triggerLabelIdx={i}
+                      adminMode={adminMode} onEdit={openEdit} onDelete={deleteBet}
+                      onMercy={mercyFn} />
+                  );
+                })}
+              </>
+            )}
+
+            {filteredPending.length > 0 && (
+              <>
+                {filteredTriggered.length > 0 && (
+                  <div style={{ fontWeight: 900, fontSize: 11, color: "#aaa", letterSpacing: 2, textTransform: "uppercase", margin: "14px 0 8px" }}>
+                    ⏳ Pending — Condition Not Yet Met
+                  </div>
+                )}
+                {filteredPending.map((bet, i) => (
+                  <BetCard key={bet.id} bet={bet} people={state.people}
+                    onTrigger={triggerBet} onSettle={settleBet} triggerLabelIdx={i}
+                    adminMode={adminMode} onEdit={openEdit} onDelete={deleteBet} />
+                ))}
+              </>
+            )}
+
+            {/* Settled shown when status filter includes settled */}
+            {filteredSettled.length > 0 && filters.status === "" && (
+              <>
+                <div style={{ fontWeight: 900, fontSize: 11, color: "#aaa", letterSpacing: 2, textTransform: "uppercase", margin: "14px 0 8px" }}>
+                  ✅ Settled (matching filters)
+                </div>
+                {filteredSettled.map(bet => {
+                  const debtor = state.people.find(p => p.id === bet.debtorId);
+                  const rec = recInfo(bet.recipientId, state.people);
+                  return (
+                    <div key={bet.id} style={{
+                      background: "#fff", borderRadius: 13, padding: "11px 13px",
+                      marginBottom: 8, border: "2px solid #eee", opacity: 0.75,
+                    }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#333", marginBottom: 4 }}>
+                        🌭 {debtor?.name ?? "?"} owes {rec.label} a hot dog if {bet.condition}
+                      </div>
+                      <div style={{ fontSize: 10, color: GREEN, fontWeight: 700 }}>✅ Settled {fmtDate(bet.settledDate)}</div>
+                    </div>
+                  );
+                })}
+              </>
+            )}
+
+            {filteredBets.length === 0 && filteredSettled.length === 0 && (
+              <div style={{ textAlign: "center", padding: "50px 20px", color: "#bbb" }}>
+                <div style={{ fontSize: 56 }}>{activeFilterCount > 0 ? "🔍" : "🌭"}</div>
+                <div style={{ fontWeight: 900, fontSize: 16, color: "#ccc", fontFamily: "'Black Han Sans', sans-serif", marginTop: 8 }}>
+                  {activeFilterCount > 0 ? "No bets match your filters" : "No Active Bets"}
+                </div>
+                <div style={{ fontSize: 12, marginTop: 5 }}>
+                  {activeFilterCount > 0 ? "Try loosening the filters" : "Everyone is innocent… for now."}
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {/* ── BOARD TAB ── */}
+        {tab === "board" && (
+          <>
+            {!stats.length ? (
+              <div style={{ textAlign: "center", padding: "60px 20px", color: "#bbb" }}>
+                <div style={{ fontSize: 64 }}>🏆</div>
+                <div style={{ fontSize: 15, marginTop: 8 }}>Add some people first!</div>
+              </div>
+            ) : (
+              <>
+                {biggestDebtor && biggestDebtor.triggered > 0 && (
+                  <div style={{
+                    background: `linear-gradient(135deg, ${ORANGE}, #c43d00)`,
+                    borderRadius: 16, padding: "14px 16px", marginBottom: 12,
+                    color: "#fff", display: "flex", alignItems: "center", gap: 12,
+                  }}>
+                    <div style={{ fontSize: 38 }}>💸</div>
+                    <div>
+                      <div style={{ fontSize: 9, opacity: 0.75, letterSpacing: 2.5, textTransform: "uppercase" }}>🚨 Hall of Immediate Shame</div>
+                      <div style={{ fontWeight: 900, fontSize: 19, fontFamily: "'Black Han Sans', sans-serif" }}>{biggestDebtor.name}</div>
+                      <div style={{ fontSize: 11, opacity: 0.88 }}>
+                        {biggestDebtor.triggered} dog{biggestDebtor.triggered !== 1 ? "s" : ""} actively owed • {SHAME_MSGS[biggestDebtor.name.length % SHAME_MSGS.length]}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {biggestDebtor && biggestDebtor.triggered === 0 && biggestDebtor.pending > 0 && (
+                  <div style={{
+                    background: `linear-gradient(135deg, ${RED}, #8B0000)`,
+                    borderRadius: 16, padding: "14px 16px", marginBottom: 12,
+                    color: "#fff", display: "flex", alignItems: "center", gap: 12,
+                  }}>
+                    <div style={{ fontSize: 38 }}>💀</div>
+                    <div>
+                      <div style={{ fontSize: 9, opacity: 0.75, letterSpacing: 2.5, textTransform: "uppercase" }}>Hall of Shame (Pending)</div>
+                      <div style={{ fontWeight: 900, fontSize: 19, fontFamily: "'Black Han Sans', sans-serif" }}>{biggestDebtor.name}</div>
+                      <div style={{ fontSize: 11, opacity: 0.88 }}>
+                        {biggestDebtor.pending} dog{biggestDebtor.pending !== 1 ? "s" : ""} on the line • {SHAME_MSGS[biggestDebtor.name.length % SHAME_MSGS.length]}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {biggestWinner && biggestWinner.dogsEaten > 0 && (
+                  <div style={{
+                    background: `linear-gradient(135deg, ${BLUE}, #003D75)`,
+                    borderRadius: 16, padding: "14px 16px", marginBottom: 14,
+                    color: "#fff", display: "flex", alignItems: "center", gap: 12,
+                  }}>
+                    <div style={{ fontSize: 38 }}>🏆</div>
+                    <div>
+                      <div style={{ fontSize: 9, opacity: 0.75, letterSpacing: 2.5, textTransform: "uppercase" }}>Hall of Glory</div>
+                      <div style={{ fontWeight: 900, fontSize: 19, fontFamily: "'Black Han Sans', sans-serif" }}>{biggestWinner.name}</div>
+                      <div style={{ fontSize: 11, opacity: 0.88 }}>
+                        {biggestWinner.dogsEaten} dog{biggestWinner.dogsEaten !== 1 ? "s" : ""} eaten • {GLORY_MSGS[biggestWinner.name.length % GLORY_MSGS.length]}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* ── AWARDS SECTION ── */}
+                {(pinnedAwards.length > 0 || currentRotating) && (
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontWeight: 900, fontSize: 11, color: "#aaa", letterSpacing: 2, textTransform: "uppercase", marginBottom: 10 }}>
+                      🏅 Awards
+                    </div>
+
+                    {/* Pinned awards */}
+                    {pinnedAwards.map(a => (
+                      <AwardCard key={a.award.id} {...a} people={state.people} />
+                    ))}
+
+                    {/* Rotating award with animated transition */}
+                    {currentRotating && (
+                      <div style={{ position: "relative" }}>
+                        <div style={{ fontSize: 9, color: "#bbb", fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
+                          <span>🎲 Rotating Spotlight</span>
+                          <div style={{ flex: 1, height: 1, background: "#eee" }} />
+                          <span style={{ color: "#ddd" }}>{rotatingIdx + 1}/{rotatingAwards.length}</span>
+                        </div>
+                        <AwardCard key={currentRotating.award.id + rotatingIdx} {...currentRotating} people={state.people} />
+                        {/* Dot indicators */}
+                        <div style={{ display: "flex", justifyContent: "center", gap: 4, marginTop: 4, marginBottom: 6 }}>
+                          {rotatingAwards.map((_, i) => (
+                            <div key={i} onClick={() => setRotatingIdx(i)} style={{
+                              width: i === rotatingIdx ? 16 : 6, height: 6,
+                              borderRadius: 3, cursor: "pointer",
+                              background: i === rotatingIdx ? BLUE : "#ddd",
+                              transition: "all 0.3s",
+                            }} />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div style={{ fontWeight: 900, fontSize: 11, color: "#aaa", letterSpacing: 2, textTransform: "uppercase", marginBottom: 10 }}>
+                  All Competitors — tap for profile
+                </div>
+
+                {[...stats].sort((a, b) => b.triggered - a.triggered || b.pending - a.pending || a.name.localeCompare(b.name)).map((p, i) => (
+                  <div key={p.id}
+                    onClick={() => setProfilePerson(p)}
+                    style={{
+                      background: "#fff", borderRadius: 14, padding: "13px 14px", marginBottom: 9,
+                      display: "flex", alignItems: "center", gap: 11, cursor: "pointer",
+                      border: p.triggered > 0 ? `2px solid ${ORANGE}` : p.pending > 0 ? `2px solid ${RED}` : "2px solid #eee",
+                      boxShadow: p.triggered > 0 ? `2px 2px 0 ${ORANGE}` : p.pending > 0 ? `2px 2px 0 ${RED}` : "none",
+                      transition: "transform 0.1s",
+                      activeTransform: "scale(0.98)",
+                    }}>
+                    <div style={{
+                      width: 24, height: 24, borderRadius: "50%", flexShrink: 0,
+                      background: i === 0 ? YELLOW : "#eee",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontWeight: 900, fontSize: 11, color: "#666",
+                    }}>{i + 1}</div>
+                    <Avatar name={p.name} size={36} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 900, fontFamily: "'Black Han Sans', sans-serif", fontSize: 14 }}>{p.name}</div>
+                      <div style={{ fontSize: 10, color: "#aaa" }}>
+                        🌭 {p.dogsEaten} eaten · 🧾 {p.charges} charges
+                      </div>
+                    </div>
+                    <div style={{ textAlign: "right", display: "flex", flexDirection: "column", gap: 3, alignItems: "flex-end" }}>
+                      {p.triggered > 0 && (
+                        <div style={{ background: ORANGE, color: "#fff", borderRadius: 20, padding: "2px 9px", fontSize: 11, fontWeight: 900 }}>
+                          🚨 {p.triggered} owed NOW
+                        </div>
+                      )}
+                      {p.pending > 0 && (
+                        <div style={{ background: "#666", color: "#fff", borderRadius: 20, padding: "2px 9px", fontSize: 11, fontWeight: 900 }}>
+                          🎲 {p.pending} dog{p.pending !== 1 ? "s" : ""} on the line
+                        </div>
+                      )}
+                      {p.owedToMe > 0 && (
+                        <div style={{ background: GREEN, color: "#fff", borderRadius: 20, padding: "2px 9px", fontSize: 11, fontWeight: 900 }}>
+                          🍽️ collect {p.owedToMe} NOW
+                        </div>
+                      )}
+                      {p.pendingForMe > 0 && (
+                        <div style={{ background: "#A0C4FF", color: "#003D75", borderRadius: 20, padding: "2px 9px", fontSize: 11, fontWeight: 900 }}>
+                          🤞 {p.pendingForMe} maybe coming
+                        </div>
+                      )}
+                      {p.triggered === 0 && p.pending === 0 && p.owedToMe === 0 && p.pendingForMe === 0 && (
+                        <div style={{ fontSize: 10, color: "#ccc" }}>clean 😇</div>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 14, color: "#ccc", marginLeft: 2 }}>›</div>
+                  </div>
+                ))}
+              </>
+            )}
+          </>
+        )}
+
+        {/* ── HISTORY TAB ── */}
+        {tab === "history" && (
+          <>
+            {!state.settled.length ? (
+              <div style={{ textAlign: "center", padding: "60px 20px", color: "#bbb" }}>
+                <div style={{ fontSize: 64 }}>📜</div>
+                <div style={{ fontSize: 15, marginTop: 8 }}>No settled bets yet.<br />The reckoning is coming.</div>
+              </div>
+            ) : (
+              <>
+                <div style={{ fontWeight: 900, fontSize: 11, color: "#aaa", letterSpacing: 2, textTransform: "uppercase", marginBottom: 10 }}>
+                  {state.settled.length} Dog{state.settled.length !== 1 ? "s" : ""} Served 🌭
+                </div>
+                {[...state.settled].reverse().map(bet => {
+                  const debtor = state.people.find(p => p.id === bet.debtorId);
+                  const rec    = recInfo(bet.recipientId, state.people);
+                  return (
+                    <div key={bet.id} style={{
+                      background: "#fff", borderRadius: 13, padding: "13px 14px",
+                      marginBottom: 9, border: "2px solid #eee", opacity: 0.85,
+                    }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 5, flexWrap: "wrap" }}>
+                        {debtor && <Avatar name={debtor.name} size={24} />}
+                        <span style={{ fontWeight: 700, fontSize: 13 }}>{debtor?.name ?? "?"}</span>
+                        <span style={{ color: "#ccc", fontSize: 14 }}>→ 🌭 →</span>
+                        <span style={{ fontWeight: 700, fontSize: 13 }}>{rec.label}</span>
+                        <span style={{ marginLeft: "auto", fontSize: 10, color: "#bbb" }}>{fmtDate(bet.settledDate)}</span>
+                      </div>
+                      <div style={{ fontSize: 12, color: "#999", fontStyle: "italic", marginBottom: 4 }}>"…if {bet.condition}"</div>
+                      <div style={{ fontSize: 10, color: GREEN, fontWeight: 700 }}>✅ Dog delivered. Debt cleared.</div>
+                    </div>
+                  );
+                })}
+              </>
+            )}
+          </>
+        )}
+
+        {/* ── RULES TAB ── */}
+        {tab === "rules" && (
+          <div style={{ paddingBottom: 20 }}>
+
+            {/* Header card */}
+            <div style={{
+              background: `linear-gradient(135deg, ${RED}, #8B0000)`,
+              borderRadius: 16, padding: "20px 18px", marginBottom: 16, color: "#fff",
+              textAlign: "center",
+            }}>
+              <div style={{ fontSize: 44, marginBottom: 6 }}>📋</div>
+              <div style={{ fontFamily: "'Black Han Sans', sans-serif", fontSize: 22, letterSpacing: 1 }}>
+                Rules of Engagement
+              </div>
+              <div style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>
+                Official™ Hot Dog Ledger Bylaws · Est. When Someone Lost a Bet
+              </div>
+            </div>
+
+            {/* Rule 1 — The Bet */}
+            <RuleCard
+              emoji="🤝" number="I" title="The Bet"
+              color={BLUE}
+              rules={[
+                "A bet is a formal agreement between two or more parties witnessed or recorded on the Ledger.",
+                "All bets must include: who owes, who collects, and the specific condition that triggers the debt.",
+                "Once logged, a bet stands until the condition is triggered or both parties agree to void it (admin required).",
+                "There is no time limit on when a condition can be triggered. Bets do not expire. The Ledger remembers everything.",
+              ]}
+            />
+
+            {/* Rule 2 — The Hot Dog */}
+            <RuleCard
+              emoji="🌭" number="II" title="The Hot Dog"
+              color={RED}
+              rules={[
+                "The standard unit of settlement is one (1) Costco Food Court hot dog, purchased at the $1.50 price point.",
+                "The loser must purchase the hot dog for the winner. Bringing your own is not acceptable.",
+                "The hot dog must be consumed on premises or presented in good faith. A receipt is sufficient proof.",
+                "Acceptable tender: (a) one warm, foil-wrapped hot dog from the Costco Food Court — the gold standard; (b) one (1) Costco Shop Card loaded with exactly $1.50 — acceptable for remote, traveling, or otherwise logistically challenged debtors; (c) six (6) quarters taped to a napkin — valid only under documented extenuating circumstances, presented with sincerity and at least mild shame.",
+                "Digital hot dogs, rain checks, Venmo requests, IOUs, and promises of 'I'll get you next time' are not valid tender under any circumstances.",
+                "The Shop Card and quarters options do not extend the 5 Business Day deadline. Procuring correct change is not an extenuating circumstance.",
+              ]}
+            />
+
+            {/* Rule 3 — 5 Business Day Rule */}
+            <RuleCard
+              emoji="⏳" number="III" title="The 5 Business Day Rule"
+              color={ORANGE}
+              rules={[
+                "Once a condition is triggered, the losing party has five (5) business days to deliver the hot dog.",
+                "Business days are Monday through Friday. Weekends, federal holidays, and 'I forgot' do not count.",
+                "After 5 business days, the debt is marked OVERDUE on the Ledger. The shame is permanent and public.",
+                "Overdue debts accrue social interest in the form of increased mockery. No financial penalties (yet).",
+              ]}
+            />
+
+            {/* Rule 4 — Executive Multiplier */}
+            <RuleCard
+              emoji="🍗" number="IV" title="The Executive Multiplier"
+              color={PURPLE}
+              accent={CHICKEN_GOLD}
+              rules={[
+                "If a bet involves an exceptionally rare, impressive, or statistically improbable feat, the stakes may be upgraded to a Rotisserie Chicken.",
+                "Examples include: a meeting ending 15 minutes early, someone actually reading the full email chain, or a printer functioning correctly on the first try.",
+                "Executive status must be designated by an Admin at the time the bet is logged or edited. It cannot be upgraded retroactively after a condition triggers.",
+                "A Rotisserie Chicken must be a whole, prepared Kirkland Signature chicken from the Costco deli. Substitutions are not permitted.",
+                "The 5 Business Day Rule applies equally to Rotisserie Chickens. There are no extensions for logistics.",
+              ]}
+            />
+
+            {/* Rule 5 — Kirkland Mercy Rule */}
+            <RuleCard
+              emoji="🪄" number="V" title="The Kirkland Mercy Rule"
+              color="#1a472a"
+              rules={[
+                "If an individual simultaneously owes three (3) or more triggered hot dogs, they may invoke the Kirkland Mercy Rule.",
+                "Upon invocation, the debtor settles ALL outstanding triggered debts at once by bringing one (1) of the following to the group: a box of 12-count Costco Food Court-style churros, or one (1) whole Costco pizza.",
+                "The Mercy Rule can only be invoked by the debtor themselves. It cannot be forced upon them by creditors.",
+                "Invoking the Mercy Rule does not erase pending (untriggered) bets. Those remain active on the Ledger.",
+                "The Mercy Rule may only be invoked once per rolling 30-day period. Frequent mercy is not mercy — it's a lifestyle.",
+              ]}
+            />
+
+            {/* Rule 6 — Ledger Integrity */}
+            <RuleCard
+              emoji="📒" number="VI" title="Ledger Integrity"
+              color="#555"
+              rules={[
+                "The Ledger is the official record. Verbal agreements are binding only when entered into the Ledger.",
+                "Only an Admin may add or remove participants, edit bet details, or delete erroneous entries.",
+                "Anyone may mark a condition as triggered. With great power comes great responsibility to not abuse this.",
+                "Anyone may mark a dog as delivered once it has been physically received. Do not mark dogs delivered preemptively.",
+                "The Ledger does not lie. If it's in there, it happened.",
+              ]}
+            />
+
+            {/* Footer */}
+            <div style={{
+              textAlign: "center", padding: "20px 10px",
+              fontSize: 11, color: "#bbb", lineHeight: 1.8,
+            }}>
+              🌭 These rules are binding in spirit if not in law. 🌭<br />
+              Disputes should be resolved with dignity, humor, and ideally a hot dog.<br />
+              <span style={{ fontSize: 10, opacity: 0.6 }}>Hot Dog Ledger™ — Not affiliated with Costco Wholesale Corporation.</span>
+            </div>
+
+          </div>
+        )}
+      </div>
+
+      {/* ── FAB ── */}
+      {state.people.length >= 1 && (
+        <button onClick={() => setShowBetForm(true)} style={{
+          position: "fixed", bottom: 22, right: 20,
+          width: 62, height: 62, borderRadius: "50%",
+          background: RED, color: "#fff", border: "none", fontSize: 28,
+          boxShadow: "0 4px 22px rgba(227,24,55,0.52)",
+          cursor: "pointer", zIndex: 100,
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>🌭</button>
+      )}
+      {state.people.length < 1 && !adminMode && (
+        <div style={{
+          position: "fixed", bottom: 22, left: "50%", transform: "translateX(-50%)",
+          background: BLUE, color: "#fff", borderRadius: 20,
+          padding: "9px 18px", fontSize: 12, fontWeight: 700,
+          boxShadow: "0 4px 18px rgba(0,0,0,0.22)", whiteSpace: "nowrap",
+        }}>🔒 Unlock Admin to add people first!</div>
+      )}
+
+      {/* ── FILTER SHEET ── */}
+      {showFilters && (
+        <BottomSheet title="🔍 Filter Bets" onClose={() => setShowFilters(false)} accent={BLUE}>
+          <label style={lbl}>🫣 Who's on the hook</label>
+          <select value={filters.debtorId} onChange={e => setFilters(f => ({ ...f, debtorId: e.target.value }))} style={sel}>
+            <option value="">Anyone</option>
+            {state.people.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+
+          <label style={lbl}>🏆 Who's collecting</label>
+          <select value={filters.recipientId} onChange={e => setFilters(f => ({ ...f, recipientId: e.target.value }))} style={sel}>
+            <option value="">Anyone</option>
+            {[...SPECIAL_TARGETS.map(t => ({ id: t.id, name: `${t.emoji} ${t.name}` })), ...state.people].map(p => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+
+          <label style={lbl}>📊 Bet status</label>
+          <select value={filters.status} onChange={e => setFilters(f => ({ ...f, status: e.target.value }))} style={sel}>
+            <option value="">All statuses</option>
+            <option value="pending">⏳ Pending</option>
+            <option value="triggered">🚨 Triggered</option>
+          </select>
+
+          <label style={lbl}>📅 Date range (bet made)</label>
+          <div style={{ display: "flex", gap: 8, marginBottom: 11 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 11, color: "#aaa", marginBottom: 4 }}>From</div>
+              <input type="date" value={filters.dateFrom}
+                onChange={e => setFilters(f => ({ ...f, dateFrom: e.target.value }))}
+                style={{ ...inp, marginBottom: 0 }} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 11, color: "#aaa", marginBottom: 4 }}>To</div>
+              <input type="date" value={filters.dateTo}
+                onChange={e => setFilters(f => ({ ...f, dateTo: e.target.value }))}
+                style={{ ...inp, marginBottom: 0 }} />
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+            <button onClick={() => { setFilters({ debtorId: "", recipientId: "", status: "", dateFrom: "", dateTo: "" }); setShowFilters(false); }} style={{
+              flex: 1, padding: "12px", background: "#eee", color: "#555",
+              border: "none", borderRadius: 12, fontWeight: 900, fontSize: 14, cursor: "pointer",
+            }}>Clear All</button>
+            <button onClick={() => setShowFilters(false)} style={{
+              flex: 2, padding: "12px", background: BLUE, color: "#fff",
+              border: "none", borderRadius: 12, fontWeight: 900, fontSize: 14,
+              cursor: "pointer", fontFamily: "'Black Han Sans', sans-serif",
+            }}>Apply Filters</button>
+          </div>
+        </BottomSheet>
+      )}
+
+      {/* ── ADD BET SHEET ── */}
+      {showBetForm && (
+        <BottomSheet title="🌭 Log a New Bet" onClose={() => setShowBetForm(false)}>
+          <div style={{
+            background: preview ? "#FFFBEA" : "#f8f8f8",
+            border: `2px dashed ${preview ? YELLOW : "#ddd"}`,
+            borderRadius: 12, padding: "11px 13px", marginBottom: 18,
+            minHeight: 50, display: "flex", alignItems: "center", transition: "all 0.2s",
+          }}>
+            {preview
+              ? <span style={{ fontWeight: 700, fontSize: 14, color: "#222", lineHeight: 1.5 }}>🌭 {preview}</span>
+              : <span style={{ fontSize: 12, color: "#bbb", fontStyle: "italic" }}>Your bet will appear here as you fill it in…</span>
+            }
+          </div>
+
+          <label style={lbl}>🫣 Who's on the hook? <span style={{ color: "#bbb", fontWeight: 400 }}>(owes the dog)</span></label>
+          <select value={form.debtorId} onChange={e => setForm(f => ({ ...f, debtorId: e.target.value }))} style={sel}>
+            <option value="">Select person…</option>
+            {state.people.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+
+          <label style={lbl}>🏆 Who do they owe? <span style={{ color: "#bbb", fontWeight: 400 }}>(gets the dog)</span></label>
+          <select value={form.recipientId} onChange={e => setForm(f => ({ ...f, recipientId: e.target.value }))} style={sel}>
+            <option value="">Select recipient…</option>
+            <optgroup label="── Special ──">
+              {SPECIAL_TARGETS.map(t => <option key={t.id} value={t.id}>{t.emoji} {t.name}</option>)}
+            </optgroup>
+            <optgroup label="── People ──">
+              {state.people.filter(p => p.id !== form.debtorId).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </optgroup>
+          </select>
+
+          <label style={lbl}>⚡ If… <span style={{ color: "#bbb", fontWeight: 400 }}>(the condition)</span></label>
+          <input value={form.condition} onChange={e => setForm(f => ({ ...f, condition: e.target.value }))}
+            placeholder={CONDITION_PLACEHOLDERS[phIdx]} style={inp} />
+
+          <label style={lbl}>📅 Date bet was made</label>
+          <input type="date" value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} style={inp} />
+
+          <div onClick={() => setForm(f => ({ ...f, executive: !f.executive }))} style={{
+              display: "flex", alignItems: "center", gap: 12, padding: "12px 14px",
+              borderRadius: 12, marginBottom: 11, cursor: "pointer",
+              background: form.executive ? "linear-gradient(135deg, #F5EEFF, #FFF8E1)" : "#f8f8f8",
+              border: `2px solid ${form.executive ? PURPLE : "#ddd"}`,
+              transition: "all 0.2s",
+            }}>
+              <div style={{ fontSize: 28 }}>🍗</div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 900, fontSize: 13, color: form.executive ? PURPLE : "#555" }}>Executive Multiplier</div>
+                <div style={{ fontSize: 11, color: "#aaa" }}>Upgrades stakes to a Rotisserie Chicken</div>
+              </div>
+              <div style={{
+                width: 42, height: 24, borderRadius: 12,
+                background: form.executive ? PURPLE : "#ccc",
+                position: "relative", transition: "background 0.2s",
+              }}>
+                <div style={{
+                  position: "absolute", top: 3, left: form.executive ? 20 : 3,
+                  width: 18, height: 18, borderRadius: "50%", background: "#fff",
+                  transition: "left 0.2s",
+                }} />
+              </div>
+          </div>
+
+          <button onClick={addBet} style={{
+            width: "100%", padding: "14px",
+            background: form.executive ? `linear-gradient(135deg, ${PURPLE}, ${CHICKEN_GOLD})` : RED,
+            color: "#fff", border: "none", borderRadius: 12, fontWeight: 900, fontSize: 16,
+            cursor: "pointer", fontFamily: "'Black Han Sans', sans-serif", letterSpacing: 1, marginTop: 3,
+          }}>{form.executive ? "🍗 ENTER THE CHICKEN INTO THE LEDGER" : "🌭 ENTER THE DOG INTO THE LEDGER"}</button>
+        </BottomSheet>
+      )}
+
+      {/* ── PROFILE SHEET ── */}
+      {profilePerson && profileStats && (
+        <BottomSheet title={`${profilePerson.name}'s Dossier`} onClose={() => setProfilePerson(null)} accent={BLUE}>
+
+          {/* Avatar + headline */}
+          <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 20 }}>
+            <Avatar name={profilePerson.name} size={60} />
+            <div>
+              <div style={{ fontWeight: 900, fontSize: 20, fontFamily: "'Black Han Sans', sans-serif" }}>{profilePerson.name}</div>
+              <div style={{ fontSize: 12, color: "#aaa", marginTop: 2 }}>
+                {profileStats.triggered > 0
+                  ? `🚨 Currently owes ${profileStats.triggered} dog${profileStats.triggered !== 1 ? "s" : ""} RIGHT NOW`
+                  : profileStats.pending > 0
+                  ? `⏳ ${profileStats.pending} pending bet${profileStats.pending !== 1 ? "s" : ""}`
+                  : "😇 Clean slate"}
+              </div>
+            </div>
+          </div>
+
+          {/* Stat grid */}
+          <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+            <StatPill value={profileStats.dogsEaten} label="Dogs Eaten" color={GREEN}  emoji="🌭" />
+            <StatPill value={profileStats.charges}   label="$1.50 Charges" color={RED} emoji="🧾" />
+            <StatPill value={profileStats.pending}   label="Dogs on the Line" color="#666" emoji="🎲" />
+            <StatPill value={profileStats.triggered} label="Owed by Me" color={ORANGE} emoji="🚨" />
+            <StatPill value={profileStats.owedToMe}  label="Coming to Me" color={GREEN} emoji="🍽️" />
+          </div>
+
+          {/* Trophy case */}
+          {(() => {
+            const profileAwards = allAwards.filter(a => a.winner.id === profilePerson.id);
+            if (profileAwards.length === 0) return null;
+            return (
+              <>
+                <div style={{ fontWeight: 900, fontSize: 11, color: "#aaa", letterSpacing: 2, textTransform: "uppercase", marginBottom: 8 }}>
+                  🏅 Awards ({profileAwards.length})
+                </div>
+                {profileAwards.map(a => (
+                  <AwardCard key={a.award.id} {...a} people={state.people} size="compact" />
+                ))}
+              </>
+            );
+          })()}
+
+          {/* Active bets */}
+          {profileActiveBets.length > 0 && (
+            <>
+              <div style={{ fontWeight: 900, fontSize: 11, color: "#aaa", letterSpacing: 2, textTransform: "uppercase", marginBottom: 8 }}>
+                Active Bets ({profileActiveBets.length})
+              </div>
+              {profileActiveBets.map(bet => (
+                <MiniBetCard key={bet.id} bet={bet} people={state.people} isSettled={false} personId={profilePerson.id} />
+              ))}
+            </>
+          )}
+
+          {/* Settled bets */}
+          {profileSettledBets.length > 0 && (
+            <>
+              <div style={{ fontWeight: 900, fontSize: 11, color: "#aaa", letterSpacing: 2, textTransform: "uppercase", margin: "14px 0 8px" }}>
+                Settled Bets ({profileSettledBets.length})
+              </div>
+              {[...profileSettledBets].reverse().map(bet => (
+                <MiniBetCard key={bet.id} bet={bet} people={state.people} isSettled={true} personId={profilePerson.id} />
+              ))}
+            </>
+          )}
+
+          {profileActiveBets.length === 0 && profileSettledBets.length === 0 && (
+            <div style={{ textAlign: "center", padding: "30px 0", color: "#ccc" }}>
+              <div style={{ fontSize: 40 }}>🌭</div>
+              <div style={{ fontSize: 13, marginTop: 6 }}>No bets yet. A suspicious level of innocence.</div>
+            </div>
+          )}
+        </BottomSheet>
+      )}
+
+      {/* ── EDIT BET SHEET ── */}
+      {editingBet && editForm && (
+        <BottomSheet title="✏️ Edit Bet" onClose={() => { setEditingBet(null); setEditForm(null); }} accent={BLUE}>
+
+          {/* Live preview */}
+          {(() => {
+            const d = state.people.find(p => p.id === editForm.debtorId);
+            const r = editForm.recipientId ? recInfo(editForm.recipientId, state.people) : null;
+            const prev = d && r && editForm.condition.trim()
+              ? `${d.name} owes ${r.label} a hot dog if ${editForm.condition.trim()}`
+              : null;
+            return (
+              <div style={{
+                background: prev ? "#FFFBEA" : "#f8f8f8",
+                border: `2px dashed ${prev ? YELLOW : "#ddd"}`,
+                borderRadius: 12, padding: "11px 13px", marginBottom: 18,
+                minHeight: 50, display: "flex", alignItems: "center",
+              }}>
+                {prev
+                  ? <span style={{ fontWeight: 700, fontSize: 14, color: "#222", lineHeight: 1.5 }}>🌭 {prev}</span>
+                  : <span style={{ fontSize: 12, color: "#bbb", fontStyle: "italic" }}>Fill in all fields to preview…</span>
+                }
+              </div>
+            );
+          })()}
+
+          <label style={lbl}>🫣 Who's on the hook?</label>
+          <select value={editForm.debtorId} onChange={e => setEditForm(f => ({ ...f, debtorId: e.target.value }))} style={sel}>
+            <option value="">Select person…</option>
+            {state.people.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+
+          <label style={lbl}>🏆 Who do they owe?</label>
+          <select value={editForm.recipientId} onChange={e => setEditForm(f => ({ ...f, recipientId: e.target.value }))} style={sel}>
+            <option value="">Select recipient…</option>
+            <optgroup label="── Special ──">
+              {SPECIAL_TARGETS.map(t => <option key={t.id} value={t.id}>{t.emoji} {t.name}</option>)}
+            </optgroup>
+            <optgroup label="── People ──">
+              {state.people.filter(p => p.id !== editForm.debtorId).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </optgroup>
+          </select>
+
+          <label style={lbl}>⚡ If…</label>
+          <input value={editForm.condition} onChange={e => setEditForm(f => ({ ...f, condition: e.target.value }))} style={inp} />
+
+          <label style={lbl}>📅 Date bet was made</label>
+          <input type="date" value={editForm.date} onChange={e => setEditForm(f => ({ ...f, date: e.target.value }))} style={inp} />
+
+          <label style={lbl}>📊 Status</label>
+          <select value={editForm.status} onChange={e => setEditForm(f => ({ ...f, status: e.target.value }))} style={sel}>
+            <option value="pending">⏳ Pending</option>
+            <option value="triggered">🚨 Triggered</option>
+          </select>
+
+          <div onClick={() => setEditForm(f => ({ ...f, executive: !f.executive }))} style={{
+            display: "flex", alignItems: "center", gap: 12, padding: "12px 14px",
+            borderRadius: 12, marginBottom: 11, cursor: "pointer",
+            background: editForm.executive ? "linear-gradient(135deg, #F5EEFF, #FFF8E1)" : "#f8f8f8",
+            border: `2px solid ${editForm.executive ? PURPLE : "#ddd"}`,
+          }}>
+            <div style={{ fontSize: 24 }}>🍗</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 900, fontSize: 13, color: editForm.executive ? PURPLE : "#555" }}>Executive Multiplier</div>
+              <div style={{ fontSize: 11, color: "#aaa" }}>Rotisserie Chicken stakes</div>
+            </div>
+            <div style={{ width: 42, height: 24, borderRadius: 12, background: editForm.executive ? PURPLE : "#ccc", position: "relative" }}>
+              <div style={{ position: "absolute", top: 3, left: editForm.executive ? 20 : 3, width: 18, height: 18, borderRadius: "50%", background: "#fff", transition: "left 0.2s" }} />
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+            <button onClick={() => { deleteBet(editingBet.id); setEditingBet(null); setEditForm(null); }} style={{
+              flex: 1, padding: "12px", background: "#fff0f0", color: RED,
+              border: `2px solid ${RED}44`, borderRadius: 12,
+              fontWeight: 900, fontSize: 14, cursor: "pointer",
+            }}>🗑️ Delete Bet</button>
+            <button onClick={saveEdit} style={{
+              flex: 2, padding: "12px", background: BLUE, color: "#fff",
+              border: "none", borderRadius: 12, fontWeight: 900, fontSize: 14,
+              cursor: "pointer", fontFamily: "'Black Han Sans', sans-serif",
+            }}>💾 Save Changes</button>
+          </div>
+        </BottomSheet>
+      )}
+
+      {/* ── MERCY CONFIRM MODAL ── */}
+      {showMercyConfirm && mercyDebtorId && (() => {
+        const debtor = state.people.find(p => p.id === mercyDebtorId);
+        const dogs = state.bets.filter(b => b.debtorId === mercyDebtorId && b.status === "triggered");
+        return (
+          <div style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)",
+            zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center", padding: 24,
+          }} onClick={() => setShowMercyConfirm(false)}>
+            <div onClick={e => e.stopPropagation()} style={{
+              background: "#fff", borderRadius: 20, padding: 24, maxWidth: 380, width: "100%",
+              border: `3px solid #2d6a4f`,
+              boxShadow: "0 8px 40px rgba(0,0,0,0.4)",
+            }}>
+              <div style={{ textAlign: "center", fontSize: 52, marginBottom: 8 }}>🪄</div>
+              <h2 style={{ margin: "0 0 8px", textAlign: "center", fontFamily: "'Black Han Sans', sans-serif", color: "#1a472a", fontSize: 22 }}>
+                Kirkland Mercy Rule
+              </h2>
+              <p style={{ fontSize: 13, color: "#555", textAlign: "center", margin: "0 0 16px", lineHeight: 1.5 }}>
+                <strong>{debtor?.name}</strong> owes <strong>{dogs.length} dogs</strong> simultaneously.
+                They may settle ALL debts at once by bringing one (1) box of churros
+                or a whole pizza for the group.
+              </p>
+              <div style={{
+                background: "#f0faf4", borderRadius: 12, padding: "10px 14px", marginBottom: 16,
+                border: "1px solid #2d6a4f33",
+              }}>
+                {dogs.map(b => {
+                  const rec = recInfo(b.recipientId, state.people);
+                  return (
+                    <div key={b.id} style={{ fontSize: 12, color: "#333", padding: "3px 0", borderBottom: "1px solid #eee" }}>
+                      🌭 → {rec.label}: <em>if {b.condition}</em>
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{ display: "flex", gap: 10 }}>
+                <button onClick={() => { setShowMercyConfirm(false); setMercyDebtorId(null); }} style={{
+                  flex: 1, padding: "12px", background: "#eee", color: "#555",
+                  border: "none", borderRadius: 12, fontWeight: 900, fontSize: 13, cursor: "pointer",
+                }}>Cancel</button>
+                <button onClick={() => invokeMercyRule(mercyDebtorId)} style={{
+                  flex: 2, padding: "12px",
+                  background: "linear-gradient(135deg, #1a472a, #2d6a4f)",
+                  color: "#fff", border: "none", borderRadius: 12,
+                  fontWeight: 900, fontSize: 13, cursor: "pointer",
+                  fontFamily: "'Black Han Sans', sans-serif",
+                }}>🍕 Grant Mercy — Churros/Pizza Incoming</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── TOAST ── */}
+      {toast && (
+        <div style={{
+          position: "fixed", bottom: 96, left: "50%", transform: "translateX(-50%)",
+          background: "#1a1a1a", color: "#fff", borderRadius: 22, padding: "10px 20px",
+          fontSize: 13, fontWeight: 700, boxShadow: "0 4px 18px rgba(0,0,0,0.32)",
+          zIndex: 9999, whiteSpace: "nowrap", animation: "fadeUp 0.22s ease",
+        }}>{toast}</div>
+      )}
+
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Black+Han+Sans&display=swap');
+        * { box-sizing: border-box; }
+        body { margin: 0; }
+        @keyframes fadeUp {
+          from { opacity: 0; transform: translateX(-50%) translateY(10px); }
+          to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+        }
+        @keyframes pulse {
+          0%, 100% { box-shadow: 0 0 0 0 rgba(255,107,0,0.4); }
+          50%       { box-shadow: 0 0 0 6px rgba(255,107,0,0); }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(React.createElement(App));
+  </script>
+</body>
+</html>
